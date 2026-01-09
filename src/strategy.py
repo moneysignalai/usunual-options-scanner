@@ -71,10 +71,10 @@ def _calculate_notional(
 
 
 def _calculate_score(notional: float, ratio: float, dte_days: int) -> float:
-    ratio_capped = min(ratio, 10.0)
-    notional_log = math.log10(max(notional, 1.0))
-    dte_bonus = max(0.0, (30 - dte_days) / 30)
-    return ratio_capped + notional_log + dte_bonus
+    notional_component = math.log10(max(notional, 1))
+    ratio_component = min(ratio, 25)
+    dte_component = max(0, 10 - min(dte_days, 10))
+    return round((ratio_component * 2) + (notional_component * 3) + dte_component, 2)
 
 
 def find_unusual_activity(
@@ -96,7 +96,12 @@ def find_unusual_activity(
         if dte_days < thresholds.min_dte_days or dte_days > thresholds.max_dte_days:
             continue
 
-        volume = contract.day.volume if contract.day and contract.day.volume else 0
+        if contract.day and contract.day.volume is not None:
+            volume = contract.day.volume
+        elif contract.prev_day and contract.prev_day.volume is not None:
+            volume = contract.prev_day.volume
+        else:
+            volume = 0
         if volume < thresholds.min_volume:
             continue
 
@@ -105,10 +110,21 @@ def find_unusual_activity(
         if notional < thresholds.min_notional:
             continue
 
-        open_interest = None
-        volume_oi_ratio = (
-            volume / open_interest if open_interest and open_interest > 0 else float(volume)
-        )
+        if contract.day and contract.day.open_interest is not None:
+            open_interest = contract.day.open_interest
+        elif contract.prev_day and contract.prev_day.open_interest is not None:
+            open_interest = contract.prev_day.open_interest
+        elif contract.open_interest is not None:
+            open_interest = contract.open_interest
+        else:
+            open_interest = None
+
+        if volume <= 0:
+            volume_oi_ratio = 0.0
+        elif open_interest is None or open_interest <= 0:
+            volume_oi_ratio = float(volume)
+        else:
+            volume_oi_ratio = volume / open_interest
         if volume_oi_ratio < thresholds.min_volume_oi_ratio:
             continue
 

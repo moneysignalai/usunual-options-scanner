@@ -18,10 +18,13 @@ def _format_number(value: Optional[float]) -> str:
     return f"{value:,.2f}"
 
 
-def _format_int(value: Optional[int]) -> str:
+def _fmt_int(value: Optional[int]) -> str:
     if value is None:
         return "N/A"
-    return f"{value}"
+    try:
+        return f"{int(value):,}"
+    except Exception:
+        return str(value)
 
 
 def _alert_title(candidate: UnusualOptionsCandidate) -> str:
@@ -33,8 +36,8 @@ def _alert_title(candidate: UnusualOptionsCandidate) -> str:
 def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
     expiration = _format_expiration(candidate.expiration_date)
     notional = _format_number(candidate.notional)
-    volume = _format_int(candidate.volume)
-    open_interest = _format_int(candidate.open_interest)
+    volume = _fmt_int(candidate.volume)
+    open_interest = _fmt_int(candidate.open_interest)
     ratio = f"{candidate.volume_oi_ratio:.2f}"
     last_price = _format_number(candidate.last_price)
 
