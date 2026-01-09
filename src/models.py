@@ -105,9 +105,11 @@ class OptionContractSnapshot(MassiveBaseModel):
     last_price: Optional[float] = Field(None, alias="last")
     last_trade: Optional[OptionContractTrade] = None
     last_quote: Optional[OptionContractQuote] = None
+    notional: Optional[float] = None
     open_interest: Optional[int] = Field(None, alias="open_interest")
     prev_day: Optional[OptionContractDay] = Field(None, alias="prev_day")
     rvol: Optional[float] = None
+    trades_count: Optional[int] = None
     volume: Optional[int] = None
     underlying_asset: Optional[UnderlyingAssetSnapshot] = None
 

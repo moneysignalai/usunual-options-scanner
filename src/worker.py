@@ -109,12 +109,10 @@ def _get_last_price(contract, midpoint: Optional[float]) -> Optional[float]:
     return None
 
 
-def _calculate_premium(
-    last_price: Optional[float], volume: int, shares_per_contract: int
-) -> float:
+def _calculate_premium(last_price: Optional[float], volume: int) -> float:
     if last_price is None or volume <= 0:
         return 0.0
-    return last_price * volume * shares_per_contract
+    return float(last_price) * int(volume) * 100.0
 
 
 def _calculate_volume_oi_ratio(
@@ -266,8 +264,7 @@ def _scan_once(
             ):
                 continue
 
-            shares_per_contract = contract.details.shares_per_contract or 100
-            notional = _calculate_premium(last_price, vol, shares_per_contract)
+            notional = _calculate_premium(last_price, vol)
             if notional < settings.unusual_min_notional:
                 continue
 
