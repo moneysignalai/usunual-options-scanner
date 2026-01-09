@@ -67,7 +67,7 @@ def find_unusual_activity(
     candidates: List[UnusualOptionsCandidate] = []
     today = date.today()
 
-    for contract in chain.options:
+    for contract in chain.contracts:
         if not contract.expiration_date or not contract.contract_type:
             continue
 
@@ -95,7 +95,7 @@ def find_unusual_activity(
         candidates.append(
             UnusualOptionsCandidate(
                 options_ticker=contract.options_ticker or "",
-                underlying_ticker=contract.underlying_ticker or "",
+                underlying_ticker=contract.underlying_ticker or chain.underlying_symbol or "",
                 direction="BULLISH" if contract.contract_type.lower() == "call" else "BEARISH",
                 expiration_date=contract.expiration_date,
                 strike=float(contract.strike or 0.0),

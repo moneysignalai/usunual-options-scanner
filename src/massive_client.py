@@ -68,7 +68,11 @@ class MassiveClient:
         wait=wait_exponential(multiplier=1, min=1, max=8),
         stop=stop_after_attempt(3),
     )
-    def _get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _get(
+        self,
+        path: str,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         Perform a GET to the Massive API with retries and logging.
 
@@ -82,39 +86,35 @@ class MassiveClient:
             logger.error("Massive API network error | url=%s | error=%s", path, exc)
             raise
 
-        # Handle HTTP errors explicitly so we can treat 404 as "no data"
         if resp.status_code == 404:
-            # This is very common for symbols with no options coverage.
             logger.warning(
                 "Massive API 404 (no data) | url=%s | body=%s",
                 resp.request.url,
                 resp.text[:500],
             )
-            # Return an empty "results" shape so callers can decide what to do.
-            return {"results": []}
+            return {}
 
-        try:
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
+        if resp.status_code >= 400:
             logger.error(
                 "Massive API request failed | url=%s | status=%s | body=%s",
                 resp.request.url,
                 resp.status_code,
                 resp.text[:500],
             )
-            raise
+            raise MassiveAPIError(
+                f"Massive API error {resp.status_code} for {resp.request.url}"
+            )
 
         try:
             return resp.json()
         except ValueError as exc:
             logger.error(
-                "Massive API returned invalid JSON | url=%s | error=%s",
+                "Massive API returned invalid JSON | url=%s | body=%s | error=%s",
                 resp.request.url,
+                resp.text[:500],
                 exc,
             )
-            raise MassiveAPIError(
-                f"Invalid JSON from Massive for {resp.request.url}"
-            ) from exc
+            return None
 
     # -------------------------------------------------------------------------
     # High-level methods
@@ -146,17 +146,20 @@ class MassiveClient:
 
         try:
             data = self._get(f"/v3/snapshot/options/{symbol}", params=params)
-        except (httpx.RequestError, httpx.HTTPStatusError, RetryError) as exc:
-            # Network issues, non-404 HTTP errors, etc.
+        except (httpx.RequestError, RetryError, MassiveAPIError) as exc:
             raise MassiveAPIError(str(exc)) from exc
 
-        # If 404/no-data, _get returns {"results": []}
+        if data == {}:
+            logger.error("Massive 404 | ticker=%s | skipping", symbol)
+            return None
+
+        if data is None:
+            logger.error("Massive snapshot JSON error | ticker=%s", symbol)
+            return None
+
         results = data.get("results") if isinstance(data, dict) else None
         if not results:
-            logger.info(
-                "Massive option chain empty | ticker=%s | reason=no results",
-                symbol,
-            )
+            logger.warning("Massive snapshot empty | ticker=%s", symbol)
             return None
 
         try:
@@ -182,7 +185,7 @@ class MassiveClient:
             )
 
         logger.info(
-            "Massive option chain fetched | ticker=%s | contracts=%s",
+            "Massive snapshot OK | ticker=%s | contract_count=%s",
             symbol,
             contracts_count,
         )
