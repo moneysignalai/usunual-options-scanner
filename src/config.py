@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # We'll warn loudly in load_settings() if it's empty.
     massive_api_key: str = Field("", env="MASSIVE_API_KEY")
     massive_base_url: str = Field(
-        "https://api.massive.app",
+        "https://api.massive.com",
         env="MASSIVE_BASE_URL",
     )
 
