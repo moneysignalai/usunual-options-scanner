@@ -20,6 +20,13 @@ class UnusualThresholds:
     min_volume: int
     min_open_interest: int
     min_volume_oi_ratio: float
+    min_trade_count: int
+    min_trade_size: int
+    min_rvol: float
+    min_iv_pctile: float
+    max_otm_pct: float
+    spread_threshold_bps: float
+    min_unusual_score: float
 
 
 def _get_effective_thresholds(settings: Settings) -> UnusualThresholds:
@@ -31,6 +38,13 @@ def _get_effective_thresholds(settings: Settings) -> UnusualThresholds:
             min_volume=min(settings.unusual_min_volume, 1),
             min_open_interest=min(settings.unusual_min_open_interest, 0),
             min_volume_oi_ratio=min(settings.unusual_min_volume_oi_ratio, 0.0),
+            min_trade_count=min(settings.unusual_min_trade_count, 0),
+            min_trade_size=min(settings.unusual_min_trade_size, 0),
+            min_rvol=min(settings.unusual_min_rvol, 0.0),
+            min_iv_pctile=min(settings.unusual_min_iv_pctile, 0.0),
+            max_otm_pct=max(settings.unusual_max_otm_pct, 0.0),
+            spread_threshold_bps=max(settings.unusual_spread_threshold_bps, 0.0),
+            min_unusual_score=min(settings.unusual_min_unusual_score, 0.0),
         )
 
     return UnusualThresholds(
@@ -40,6 +54,13 @@ def _get_effective_thresholds(settings: Settings) -> UnusualThresholds:
         min_volume=settings.unusual_min_volume,
         min_open_interest=settings.unusual_min_open_interest,
         min_volume_oi_ratio=settings.unusual_min_volume_oi_ratio,
+        min_trade_count=settings.unusual_min_trade_count,
+        min_trade_size=settings.unusual_min_trade_size,
+        min_rvol=settings.unusual_min_rvol,
+        min_iv_pctile=settings.unusual_min_iv_pctile,
+        max_otm_pct=settings.unusual_max_otm_pct,
+        spread_threshold_bps=settings.unusual_spread_threshold_bps,
+        min_unusual_score=settings.unusual_min_unusual_score,
     )
 
 
@@ -49,7 +70,17 @@ def _calculate_mid_price(contract: OptionContractSnapshot) -> float | None:
     return (contract.bid + contract.ask) / 2
 
 
-def _calculate_notional(price: float | None, volume: int | None) -> float:
+def _resolve_underlying_price(
+    contract: OptionContractSnapshot, chain: OptionChainSnapshot
+) -> float | None:
+    return contract.underlying_price or chain.underlying_price
+
+
+def _calculate_notional(
+    contract: OptionContractSnapshot, price: float | None, volume: int | None
+) -> float:
+    if contract.notional is not None and contract.notional > 0:
+        return float(contract.notional)
     if price is None or volume is None:
         return 0.0
     return price * volume * 100
@@ -59,7 +90,7 @@ def _calculate_ratio(volume: int | None, open_interest: int | None) -> float:
     if volume is None or volume == 0:
         return 0.0
     if open_interest is None or open_interest == 0:
-        return float("inf")
+        return 0.0
     return volume / open_interest
 
 
@@ -144,7 +175,7 @@ def _build_debug_candidates(
         if price is None:
             continue
 
-        notional = _calculate_notional(price, contract.volume)
+        notional = _calculate_notional(contract, price, contract.volume)
         ratio = _calculate_ratio(contract.volume, contract.open_interest)
         score = _calculate_score(notional, ratio, max(dte_days, 0), max(dte_days, 1))
         scored.append((notional, contract, ratio, score, dte_days))
@@ -175,63 +206,93 @@ def find_unusual_activity(
     candidates: List[UnusualOptionsCandidate] = []
     today = date.today()
     thresholds = _get_effective_thresholds(settings)
-
-    # PIPELINE:
-    # 1) flatten contracts
-    # 2) apply filters (DTE, price, volume, OI, notional, ratio)
-    # 3) build Alert objects (UnusualOptionsCandidate)
-    # 4) return candidates to sinks
-    total_contracts = len(chain.contracts)
-    if settings.debug_mode:
-        logger.info(
-            "Contracts before filters | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            total_contracts,
-        )
-
-    counts = {
-        "dte": 0,
-        "price": 0,
-        "volume": 0,
-        "open_interest": 0,
-        "notional": 0,
-        "ratio": 0,
-    }
+    rejection_logs = 0
 
     for contract in chain.contracts:
+        reasons: list[str] = []
+
         if not contract.expiration_date or not contract.contract_type:
+            reasons.append("missing_expiry_or_type")
+            if reasons:
+                if settings.debug_mode and rejection_logs < 5:
+                    logger.debug(
+                        "Contract rejected | symbol=%s | reasons=%s",
+                        contract.options_ticker,
+                        reasons,
+                    )
+                    rejection_logs += 1
             continue
 
         dte_days = (contract.expiration_date - today).days
         if dte_days < thresholds.min_dte_days or dte_days > thresholds.max_dte_days:
-            continue
-        counts["dte"] += 1
-
-        mid_price = _calculate_mid_price(contract)
-        price = contract.last_price or mid_price
-        if price is None:
-            continue
-        counts["price"] += 1
+            reasons.append("dte")
 
         volume = contract.volume or 0
         if volume < thresholds.min_volume:
-            continue
-        counts["volume"] += 1
+            reasons.append("volume")
 
         open_interest = contract.open_interest or 0
         if open_interest < thresholds.min_open_interest:
-            continue
-        counts["open_interest"] += 1
+            reasons.append("open_interest")
 
-        notional = _calculate_notional(price, contract.volume)
+        if contract.trade_count is not None and contract.trade_count < thresholds.min_trade_count:
+            reasons.append("trade_count")
+
+        if contract.trade_size is not None and contract.trade_size < thresholds.min_trade_size:
+            reasons.append("trade_size")
+
+        mid_price = _calculate_mid_price(contract)
+        price = contract.last_price or mid_price
+        if price is None and not contract.notional:
+            reasons.append("price")
+
+        notional = _calculate_notional(contract, price, contract.volume)
         if notional < thresholds.min_notional:
-            continue
-        counts["notional"] += 1
+            reasons.append("notional")
 
         ratio = _calculate_ratio(contract.volume, contract.open_interest)
         if ratio < thresholds.min_volume_oi_ratio:
+            reasons.append("volume_oi_ratio")
+
+        if contract.rvol is not None and contract.rvol < thresholds.min_rvol:
+            reasons.append("rvol")
+
+        if (
+            contract.iv_percentile is not None
+            and contract.iv_percentile < thresholds.min_iv_pctile
+        ):
+            reasons.append("iv_pctile")
+
+        if (
+            contract.unusual_score is not None
+            and contract.unusual_score < thresholds.min_unusual_score
+        ):
+            reasons.append("unusual_score")
+
+        if thresholds.max_otm_pct > 0:
+            underlying_price = _resolve_underlying_price(contract, chain)
+            if underlying_price and contract.strike:
+                otm_pct = abs((contract.strike - underlying_price) / underlying_price) * 100
+                if otm_pct > thresholds.max_otm_pct:
+                    reasons.append("otm_pct")
+
+        if thresholds.spread_threshold_bps > 0:
+            if contract.bid is not None and contract.ask is not None:
+                mid = _calculate_mid_price(contract)
+                if mid and mid > 0:
+                    spread_bps = (contract.ask - contract.bid) / mid * 10_000
+                    if spread_bps > thresholds.spread_threshold_bps:
+                        reasons.append("spread_bps")
+
+        if reasons:
+            if settings.debug_mode and rejection_logs < 5:
+                logger.debug(
+                    "Contract rejected | symbol=%s | reasons=%s",
+                    contract.options_ticker,
+                    reasons,
+                )
+                rejection_logs += 1
             continue
-        counts["ratio"] += 1
 
         score = _calculate_score(notional, ratio, dte_days, thresholds.max_dte_days)
         is_sweep = _detect_sweep(contract, notional, ratio, thresholds.min_notional)
@@ -254,38 +315,6 @@ def find_unusual_activity(
             candidate.strike,
             candidate.expiration_date,
             candidate.notional,
-        )
-
-    if settings.debug_mode:
-        logger.info(
-            "After DTE filter | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            counts["dte"],
-        )
-        logger.info(
-            "After price filter | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            counts["price"],
-        )
-        logger.info(
-            "After volume filter | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            counts["volume"],
-        )
-        logger.info(
-            "After open interest filter | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            counts["open_interest"],
-        )
-        logger.info(
-            "After notional filter | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            counts["notional"],
-        )
-        logger.info(
-            "After ratio filter | ticker=%s | count=%d",
-            chain.underlying_symbol,
-            counts["ratio"],
         )
 
     candidates.sort(key=lambda item: item.score, reverse=True)
