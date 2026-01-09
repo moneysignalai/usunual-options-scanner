@@ -8,18 +8,20 @@ from pydantic.v1 import BaseModel, Field, validator
 
 
 class Settings(BaseModel):
-    """
-    Central configuration for the unusual options scanner.
+    massive_api_key: str = Field(..., env="MASSIVE_API_KEY")
 
-    Notes:
-    - We hard-code the Massive base URL here instead of reading it from ENV to avoid
-      accidentally ending up with bad values like `https://api.massive.app/v1/v3/...`.
-    - The only required env var is MASSIVE_API_KEY. Everything else has sane defaults.
-    """
+    # We now hard-code the Massive base URL in code and do NOT read it from env.
+    # This avoids issues like accidentally ending up with `/v1/v3/...` in the URL.
+    massive_base_url: str = Field("https://api.massive.app")
 
-    # Massive / market-data config
-    massive_api_key: str = Field("", env="MASSIVE_API_KEY")
-    massive_base_url: str = "https://api.massive.com"
+    # ... other fields (ticker_universe, scan_interval_seconds, etc.) stay the same ...
+
+    @validator("massive_api_key")
+    def validate_massive_api_key(cls, v: str) -> str:
+        """Ensure the API key is not empty or whitespace-only."""
+        if not v or not v.strip():
+            raise ValueError("MASSIVE_API_KEY is set but empty or whitespace. Please set a real key.")
+        return v.strip()
 
     # Scanner config
     ticker_universe: List[str] = Field(
