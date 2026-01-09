@@ -70,11 +70,59 @@ def _calculate_notional(
     return midpoint * volume * shares_per_contract
 
 
-def _calculate_score(notional: float, ratio: float, dte_days: int) -> float:
-    notional_component = math.log10(max(notional, 1))
-    ratio_component = min(ratio, 25)
-    dte_component = max(0, 10 - min(dte_days, 10))
-    return round((ratio_component * 2) + (notional_component * 3) + dte_component, 2)
+def _calculate_score(notional: float, volume_oi_ratio: float, dte_days: int) -> float:
+    """
+    Compute a bounded 0–100 “unusualness” score combining:
+    - notional size
+    - volume/oi ratio
+    - days to expiration
+
+    Design:
+    - Notional contributes 0–50 points
+    - Vol/OI ratio contributes 0–30 points (after clamping)
+    - DTE contributes 0–20 points with a sweet spot around ~10 DTE
+    """
+
+    # Guard against None / bad values
+    notional = float(notional or 0.0)
+    volume_oi_ratio = float(volume_oi_ratio or 0.0)
+    dte_days = int(dte_days or 0)
+
+    # 1) Ratio component: 0–30
+    # Cap ratio at 25 so extreme outliers don’t dominate.
+    ratio_capped = max(0.0, min(volume_oi_ratio, 25.0))
+    ratio_score = (ratio_capped / 25.0) * 30.0  # 0–30
+
+    # 2) Notional component: 0–50
+    # Use log10(notional) so size scales sensibly by order of magnitude.
+    if notional <= 0:
+        notional_score = 0.0
+    else:
+        # Rough intuition:
+        # - $10k  => log10(1e4)  = 4  => score ~ 0
+        # - $100k => log10(1e5)  = 5  => score ~ 10
+        # - $1M   => log10(1e6)  = 6  => score ~ 20
+        # - $10M  => log10(1e7)  = 7  => score ~ 30
+        # - $100M => log10(1e8)  = 8  => score ~ 40
+        log_n = math.log10(notional)
+        notional_score = (log_n - 4.0) * 10.0
+        notional_score = max(0.0, min(notional_score, 50.0))  # clamp to 0–50
+
+    # 3) DTE component: 0–20
+    # We want near-term flow (around ~10 DTE) to score higher.
+    if dte_days <= 0:
+        dte_score = 0.0
+    else:
+        # Center at 10 days; decay as we move away.
+        # distance 0 -> 20 pts, distance ~10 -> ~0 pts.
+        distance = abs(dte_days - 10)
+        dte_score = max(0.0, 20.0 - (distance / 10.0) * 20.0)
+        # Already clamped to [0, 20]
+
+    total_score = ratio_score + notional_score + dte_score
+    # Final clamp for safety
+    total_score = max(0.0, min(total_score, 100.0))
+    return round(total_score, 2)
 
 
 def find_unusual_activity(
@@ -119,12 +167,12 @@ def find_unusual_activity(
         else:
             open_interest = None
 
-        if volume <= 0:
-            volume_oi_ratio = 0.0
-        elif open_interest is None or open_interest <= 0:
-            volume_oi_ratio = float(volume)
+        # Compute volume/OI ratio only when OI is present and > 0.
+        # If OI is missing or zero, treat ratio as 0.0 for filtering/scoring.
+        if open_interest and open_interest > 0:
+            volume_oi_ratio = float(volume) / float(open_interest)
         else:
-            volume_oi_ratio = volume / open_interest
+            volume_oi_ratio = 0.0
         if volume_oi_ratio < thresholds.min_volume_oi_ratio:
             continue
 
