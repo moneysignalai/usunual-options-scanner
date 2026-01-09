@@ -9,7 +9,11 @@ from pydantic.v1 import BaseModel, Field, validator
 
 class Settings(BaseModel):
     massive_api_key: str = Field(..., env="MASSIVE_API_KEY")
-    massive_base_url: str = Field("https://api.massive.app/v1", env="MASSIVE_BASE_URL")
+
+    # We now hard-code the Massive base URL in code and do NOT read it from env.
+    # This avoids issues like accidentally ending up with `/v1/v3/...` in the URL.
+    massive_base_url: str = Field("https://api.massive.app")
+
     ticker_universe: List[str] = Field(
         default_factory=lambda: [
             "SPY",
@@ -56,10 +60,18 @@ class Settings(BaseModel):
 
 
 def load_settings() -> Settings:
+    """
+    Load settings from environment variables with sensible defaults.
+
+    NOTE:
+    - We no longer read MASSIVE_BASE_URL from the environment.
+      The Massive base URL is fixed as https://api.massive.app in the Settings
+      to prevent path/version bugs.
+    """
     load_dotenv()
     return Settings(
         massive_api_key=os.getenv("MASSIVE_API_KEY", ""),
-        massive_base_url=os.getenv("MASSIVE_BASE_URL", "https://api.massive.app/v1"),
+        # massive_base_url is NOT passed here; it uses the hard-coded default.
         ticker_universe=os.getenv(
             "TICKER_UNIVERSE",
             "SPY,QQQ,IWM,NVDA,TSLA,AAPL,MSFT,AMZN,META,AVGO,AMD",
