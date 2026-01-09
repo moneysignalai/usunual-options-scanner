@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import logging
+from datetime import date
+from typing import Iterable, Optional
+
+from .models import UnusualOptionsCandidate
+from .telegram_client import TelegramClient, TelegramDeliveryError
+
+
+def _format_expiration(expiration: date) -> str:
+    return expiration.strftime("%m-%d-%Y")
+
+
+def _format_number(value: Optional[float]) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:,.2f}"
+
+
+def _format_int(value: Optional[int]) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value}"
+
+
+def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
+    expiration = _format_expiration(candidate.expiration_date)
+    notional = _format_number(candidate.notional)
+    volume = _format_int(candidate.volume)
+    open_interest = _format_int(candidate.open_interest)
+    ratio = f"{candidate.volume_oi_ratio:.2f}"
+    last_price = _format_number(candidate.last_price)
+
+    if candidate.is_sweep:
+        header = "🚨 SWEEP DETECTED — UNUSUAL OPTIONS FLOW"
+        title = f"📌 {candidate.underlying_ticker} — {candidate.contract_type} (SWEEP)"
+        footer = "#FlowBot #UnusualOptions #Sweep"
+    else:
+        header = "📢 UNUSUAL OPTIONS FLOW DETECTED"
+        title = f"📌 {candidate.underlying_ticker} — {candidate.contract_type}"
+        footer = "#FlowBot #UnusualOptions"
+
+    lines = [
+        header,
+        "",
+        title,
+        f"🎯 Strike: {candidate.strike} | ⏳ Expires: {expiration}",
+        f"💸 Premium: ${notional}",
+        f"📊 Vol/OI: {volume}/{open_interest} (Ratio {ratio})",
+        f"📈 Last: ${last_price} | DTE: {candidate.dte_days}",
+        f"⭐ Score: {candidate.score:.2f}",
+        "",
+        footer,
+    ]
+    return "\n".join(lines)
+
+
+class AlertSink:
+    def send(self, candidate: UnusualOptionsCandidate) -> None:
+        raise NotImplementedError
+
+
+class ConsoleAlertSink(AlertSink):
+    def __init__(self, logger: logging.Logger) -> None:
+        self._logger = logger
+
+    def send(self, candidate: UnusualOptionsCandidate) -> None:
+        message = format_alert_message(candidate)
+        self._logger.info(
+            "Alert dispatched | ticker=%s | strike=%s | sweep=%s | message=%s",
+            candidate.underlying_ticker,
+            candidate.strike,
+            candidate.is_sweep,
+            message.replace("\n", " | "),
+        )
+
+
+class TelegramAlertSink(AlertSink):
+    def __init__(self, client: TelegramClient, logger: logging.Logger) -> None:
+        self._client = client
+        self._logger = logger
+
+    def send(self, candidate: UnusualOptionsCandidate) -> None:
+        message = format_alert_message(candidate)
+        try:
+            self._client.send_message(message)
+        except TelegramDeliveryError as exc:
+            self._logger.error(
+                "Telegram alert failed | ticker=%s | error=%s",
+                candidate.underlying_ticker,
+                exc,
+            )
+
+
+def build_alert_sinks(
+    logger: logging.Logger,
+    enable_telegram: bool,
+    telegram_client: Optional[TelegramClient] = None,
+) -> Iterable[AlertSink]:
+    sinks: list[AlertSink] = [ConsoleAlertSink(logger)]
+    if enable_telegram and telegram_client is not None:
+        sinks.append(TelegramAlertSink(telegram_client, logger))
+    return sinks
