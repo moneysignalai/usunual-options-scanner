@@ -126,90 +126,35 @@ class MassiveClient:
         contract_type: Optional[str] = None,
         limit: int = 250,
     ) -> Optional[OptionChainSnapshotResponse]:
-        """
-        Fetch the option chain snapshot for a given underlying symbol.
-
-        Massive docs (examples):
-
-            GET /v3/snapshot/options/{underlyingAsset}
-
-        e.g.
-            /v3/snapshot/options/SPY
-            /v3/snapshot/options/I:SPX
-
-        We keep this method aligned with that endpoint.
-        """
-        params: Dict[str, Any] = {"limit": limit}
+        params: dict = {"limit": limit}
         if contract_type:
-            # Massive expects "calls" / "puts" here
             params["contract_type"] = contract_type
 
         try:
             data = self._get(f"/v3/snapshot/options/{symbol}", params=params)
-        except (httpx.RequestError, RetryError, MassiveAPIError) as exc:
-            logger.error(
-                "Massive snapshot request failed | ticker=%s | error=%s",
-                symbol,
-                exc,
-            )
-            return None
+        except (httpx.RequestError, httpx.HTTPStatusError, RetryError) as exc:
+            logger.error("Failed Massive GET for %s: %s", symbol, exc)
+            raise MassiveAPIError(str(exc)) from exc
 
-        if data == {}:
-            logger.error("Massive 404 | ticker=%s | skipping", symbol)
-            return None
+        if not isinstance(data, dict):
+            logger.error("Unexpected Massive response for %s", symbol)
+            raise MassiveAPIError("Unexpected Massive response type")
 
-        if data is None:
-            logger.error("Massive snapshot JSON error | ticker=%s", symbol)
-            return None
-
-        if self._settings.debug_mode and symbol.upper() in {"SPY", "QQQ", "NVDA", "AAPL"}:
-            if isinstance(data, dict):
-                logger.debug(
-                    "Snapshot root keys | ticker=%s | keys=%s",
-                    symbol,
-                    list(data.keys()),
-                )
-                logger.debug(
-                    "Snapshot sample | ticker=%s | sample=%s",
-                    symbol,
-                    str(data)[:400],
-                )
-                raw_results = data.get("results") or data.get("data")
-                if isinstance(raw_results, list) and raw_results:
-                    raw_contracts = raw_results[0].get("contracts") or raw_results[0].get(
-                        "options"
-                    )
-                    if isinstance(raw_contracts, list) and raw_contracts:
-                        logger.debug(
-                            "Snapshot contract keys | ticker=%s | keys=%s",
-                            symbol,
-                            list(raw_contracts[0].keys()),
-                        )
-            else:
-                logger.debug(
-                    "Raw snapshot payload is %s | sample=%s",
-                    type(data),
-                    str(data)[:400],
-                )
+        logger.debug("Massive raw keys for %s: %s", symbol, list(data.keys()))
 
         try:
             snapshot = OptionChainSnapshotResponse.parse_obj(data)
         except Exception as exc:
-            logger.error(
-                "Failed to parse option chain snapshot | ticker=%s | error=%s",
-                symbol,
-                exc,
-            )
-            return None
+            logger.exception("Failed to parse Massive snapshot | ticker=%s", symbol)
+            raise MassiveAPIError(
+                f"Failed to parse option chain snapshot for {symbol}: {exc}"
+            ) from exc
 
-        results = snapshot.results or []
-        contracts_count = sum(
-            len(result.contracts or []) for result in results if result is not None
-        )
-
+        contract_count = len(snapshot.results or [])
         logger.info(
-            "Massive snapshot OK | ticker=%s | contract_count=%s",
+            "Massive option chain fetched | ticker=%s | contracts=%s",
             symbol,
-            contracts_count,
+            contract_count,
         )
+
         return snapshot

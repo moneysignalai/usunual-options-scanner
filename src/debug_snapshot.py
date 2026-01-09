@@ -6,8 +6,6 @@ import sys
 
 from .config import load_settings
 from .massive_client import MassiveClient
-from .strategy import find_unusual_activity
-from .alerts import format_alert_message
 
 
 logger = logging.getLogger("debug_snapshot")
@@ -37,19 +35,19 @@ def main() -> None:
             logger.info("No snapshot data | ticker=%s", symbol)
             return
 
-        contract_count = sum(len(result.contracts or []) for result in snapshot.results)
-        logger.info("Snapshot loaded | ticker=%s | contract_count=%s", symbol, contract_count)
-
-        candidates = []
-        for result in snapshot.results:
-            candidates.extend(find_unusual_activity(result, settings))
-
-        logger.info("Candidates passing filters | ticker=%s | count=%d", symbol, len(candidates))
-        for candidate in candidates[:3]:
+        contracts = snapshot.results or []
+        contract_count = len(contracts)
+        logger.info(
+            "Snapshot loaded | ticker=%s | contract_count=%s", symbol, contract_count
+        )
+        for contract in contracts[:5]:
             logger.info(
-                "Example alert | ticker=%s | message=%s",
-                symbol,
-                format_alert_message(candidate).replace("\n", " | "),
+                "Contract sample | opt=%s | strike=%s | exp=%s | type=%s | volume=%s",
+                contract.details.ticker,
+                contract.details.strike_price,
+                contract.details.expiration_date,
+                contract.details.contract_type,
+                contract.day.volume if contract.day else None,
             )
     finally:
         client.close()

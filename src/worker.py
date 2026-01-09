@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import logging
+import math
 import signal
 import sys
 import time
-from typing import Iterable, List
+from datetime import date
+from typing import Iterable, List, Optional
 
 from .alerts import AlertSink, build_alert_sinks
 from .config import Settings, load_settings
 from .massive_client import MassiveClient
 from .models import UnusualOptionsCandidate
-from .strategy import find_unusual_activity
 from .telegram_client import TelegramClient
 
 
@@ -76,6 +77,39 @@ def _build_sinks(settings: Settings) -> Iterable[AlertSink]:
     return sinks
 
 
+def _parse_expiration(expiration: Optional[str]) -> Optional[date]:
+    if not expiration:
+        return None
+    try:
+        return date.fromisoformat(expiration)
+    except ValueError:
+        return None
+
+
+def _calculate_midpoint(contract) -> Optional[float]:
+    if not contract.last_quote:
+        return None
+    if contract.last_quote.midpoint is not None:
+        return contract.last_quote.midpoint
+    if contract.last_quote.bid is None or contract.last_quote.ask is None:
+        return None
+    return (contract.last_quote.bid + contract.last_quote.ask) / 2
+
+
+def _calculate_notional(
+    midpoint: Optional[float], volume: int, shares_per_contract: int
+) -> float:
+    if midpoint is None or volume <= 0:
+        return 0.0
+    return midpoint * volume * shares_per_contract
+
+
+def _calculate_score(notional: float, volume_oi_ratio: float, dte_days: int) -> float:
+    notional_score = math.log10(max(notional, 1.0))
+    dte_bonus = max(0.0, (30 - dte_days) / 30)
+    return notional_score + volume_oi_ratio + dte_bonus
+
+
 def _scan_once(
     settings: Settings,
     client: MassiveClient,
@@ -112,29 +146,98 @@ def _scan_once(
             continue
 
         if snapshot_resp is None:
-            logger.info("No snapshot data | ticker=%s", ticker)
+            logger.info("No snapshot returned | ticker=%s", ticker)
             continue
 
-        results = snapshot_resp.results or []
-        if not results:
-            logger.info("No snapshot data | ticker=%s", ticker)
-            continue
-
-        contract_count = sum(len(result.contracts or []) for result in results)
+        contracts = snapshot_resp.results or []
+        contract_count = len(contracts)
         logger.info(
             "Snapshot loaded | ticker=%s | contract_count=%s",
             ticker,
             contract_count,
         )
 
-        candidates: List[UnusualOptionsCandidate] = []
+        if contract_count == 0:
+            continue
 
-        for result in results:
-            contracts = result.contracts or []
-            if not contracts:
+        candidates: List[UnusualOptionsCandidate] = []
+        for contract in contracts:
+            contract_ticker = contract.details.ticker
+            strike = contract.details.strike_price
+            expiration = contract.details.expiration_date
+            side = contract.details.contract_type
+            vol = contract.day.volume if contract.day and contract.day.volume else 0
+            mid = _calculate_midpoint(contract)
+
+            logger.debug(
+                "FILTER | opt=%s | strike=%s | exp=%s | mid=%s | vol=%s | "
+                "min_notional=%s | dte_min=%s | dte_max=%s",
+                contract_ticker,
+                strike,
+                expiration,
+                mid,
+                vol,
+                settings.unusual_min_notional,
+                settings.unusual_min_dte_days,
+                settings.unusual_max_dte_days,
+            )
+
+            expiration_date = _parse_expiration(expiration)
+            if not expiration_date or not side:
                 continue
 
-            candidates.extend(find_unusual_activity(result, settings))
+            dte_days = (expiration_date - date.today()).days
+            if (
+                dte_days < settings.unusual_min_dte_days
+                or dte_days > settings.unusual_max_dte_days
+            ):
+                continue
+
+            if vol < settings.unusual_min_volume:
+                continue
+
+            open_interest = None
+            volume_oi_ratio = (
+                vol / open_interest if open_interest and open_interest > 0 else float(vol)
+            )
+            if volume_oi_ratio < settings.unusual_min_volume_oi_ratio:
+                continue
+
+            shares_per_contract = contract.details.shares_per_contract or 100
+            notional = _calculate_notional(mid, vol, shares_per_contract)
+            if notional < settings.unusual_min_notional:
+                continue
+
+            underlying_ticker = (
+                contract.underlying_asset.ticker
+                if contract.underlying_asset and contract.underlying_asset.ticker
+                else ticker
+            )
+            score = _calculate_score(notional, volume_oi_ratio, dte_days)
+            candidates.append(
+                UnusualOptionsCandidate(
+                    options_ticker=contract_ticker,
+                    underlying_ticker=underlying_ticker,
+                    direction="BULLISH"
+                    if side.lower() == "call"
+                    else "BEARISH",
+                    expiration_date=expiration_date,
+                    strike=float(strike or 0.0),
+                    contract_type=side.upper(),
+                    last_price=mid,
+                    volume=vol,
+                    open_interest=open_interest,
+                    notional=notional,
+                    volume_oi_ratio=volume_oi_ratio,
+                    dte_days=dte_days,
+                    score=score,
+                )
+            )
+
+        if candidates:
+            logger.info(
+                "Found %d unusual contracts | ticker=%s", len(candidates), ticker
+            )
 
         for candidate in candidates:
             logger.info(
