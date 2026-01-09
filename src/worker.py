@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import math
 import signal
 import sys
 import time
@@ -96,18 +95,64 @@ def _calculate_midpoint(contract) -> Optional[float]:
     return (contract.last_quote.bid + contract.last_quote.ask) / 2
 
 
-def _calculate_notional(
-    midpoint: Optional[float], volume: int, shares_per_contract: int
+def _get_last_price(contract, midpoint: Optional[float]) -> Optional[float]:
+    if contract.last_trade and contract.last_trade.price is not None:
+        return contract.last_trade.price
+    if contract.last_price is not None:
+        return contract.last_price
+    if midpoint is not None:
+        return midpoint
+    if contract.day and contract.day.close is not None:
+        return contract.day.close
+    if contract.prev_day and contract.prev_day.close is not None:
+        return contract.prev_day.close
+    return None
+
+
+def _calculate_premium(
+    last_price: Optional[float], volume: int, shares_per_contract: int
 ) -> float:
-    if midpoint is None or volume <= 0:
+    if last_price is None or volume <= 0:
         return 0.0
-    return midpoint * volume * shares_per_contract
+    return last_price * volume * shares_per_contract
 
 
-def _calculate_score(notional: float, volume_oi_ratio: float, dte_days: int) -> float:
-    notional_score = math.log10(max(notional, 1.0))
-    dte_bonus = max(0.0, (30 - dte_days) / 30)
-    return notional_score + volume_oi_ratio + dte_bonus
+def _calculate_volume_oi_ratio(
+    volume: int, open_interest: Optional[int]
+) -> Optional[float]:
+    if open_interest and open_interest > 0:
+        return float(volume) / float(open_interest)
+    return None
+
+
+def _calculate_score(
+    notional: float,
+    volume_oi_ratio: Optional[float],
+    rvol: Optional[float],
+    dte_days: int,
+) -> float:
+    notional_score = min(max(notional / 100_000.0, 0.0), 10.0)
+    rvol_value = rvol if rvol is not None else 1.0
+    rvol_score = min(max(rvol_value, 0.0), 10.0)
+    ratio_value = volume_oi_ratio if volume_oi_ratio is not None else 1.0
+    ratio_score = min(max(ratio_value, 0.0), 10.0)
+
+    if dte_days <= 0:
+        dte_score = 0.0
+    elif dte_days <= 7:
+        dte_score = 5.0
+    elif dte_days <= 21:
+        dte_score = 3.0
+    else:
+        dte_score = 1.0
+
+    raw_score = (
+        notional_score * 0.4
+        + rvol_score * 0.3
+        + ratio_score * 0.2
+        + dte_score * 0.1
+    )
+    return round(min(raw_score, 50.0), 2)
 
 
 def _scan_once(
@@ -166,8 +211,8 @@ def _scan_once(
             strike = contract.details.strike_price
             expiration = contract.details.expiration_date
             side = contract.details.contract_type
-            vol = contract.day.volume if contract.day and contract.day.volume else 0
             mid = _calculate_midpoint(contract)
+            last_price = _get_last_price(contract, mid)
 
             logger.debug(
                 "FILTER | opt=%s | strike=%s | exp=%s | mid=%s | vol=%s | "
@@ -176,7 +221,7 @@ def _scan_once(
                 strike,
                 expiration,
                 mid,
-                vol,
+                contract.day.volume if contract.day else None,
                 settings.unusual_min_notional,
                 settings.unusual_min_dte_days,
                 settings.unusual_max_dte_days,
@@ -193,18 +238,36 @@ def _scan_once(
             ):
                 continue
 
+            if contract.day and contract.day.volume is not None:
+                vol = contract.day.volume
+            elif contract.prev_day and contract.prev_day.volume is not None:
+                vol = contract.prev_day.volume
+            else:
+                vol = contract.volume or 0
             if vol < settings.unusual_min_volume:
                 continue
 
-            open_interest = None
-            volume_oi_ratio = (
-                vol / open_interest if open_interest and open_interest > 0 else float(vol)
-            )
-            if volume_oi_ratio < settings.unusual_min_volume_oi_ratio:
+            if contract.day and contract.day.open_interest is not None:
+                open_interest = contract.day.open_interest
+            elif contract.prev_day and contract.prev_day.open_interest is not None:
+                open_interest = contract.prev_day.open_interest
+            else:
+                open_interest = contract.open_interest
+
+            volume_oi_ratio = _calculate_volume_oi_ratio(vol, open_interest)
+            if (
+                volume_oi_ratio is None
+                and settings.unusual_min_volume_oi_ratio > 0.0
+            ):
+                continue
+            if (
+                volume_oi_ratio is not None
+                and volume_oi_ratio < settings.unusual_min_volume_oi_ratio
+            ):
                 continue
 
             shares_per_contract = contract.details.shares_per_contract or 100
-            notional = _calculate_notional(mid, vol, shares_per_contract)
+            notional = _calculate_premium(last_price, vol, shares_per_contract)
             if notional < settings.unusual_min_notional:
                 continue
 
@@ -213,7 +276,25 @@ def _scan_once(
                 if contract.underlying_asset and contract.underlying_asset.ticker
                 else ticker
             )
-            score = _calculate_score(notional, volume_oi_ratio, dte_days)
+            score = _calculate_score(notional, volume_oi_ratio, contract.rvol, dte_days)
+            if score < settings.unusual_min_unusual_score:
+                continue
+            if not candidates:
+                logger.debug(
+                    "Alert debug | ticker=%s side=%s strike=%s exp=%s notional=%s "
+                    "vol=%s oi=%s vol_oi_ratio=%s rvol=%s dte=%s score=%s",
+                    underlying_ticker,
+                    side,
+                    strike,
+                    expiration,
+                    notional,
+                    vol,
+                    open_interest,
+                    volume_oi_ratio,
+                    contract.rvol,
+                    dte_days,
+                    score,
+                )
             candidates.append(
                 UnusualOptionsCandidate(
                     options_ticker=contract_ticker,
@@ -224,7 +305,7 @@ def _scan_once(
                     expiration_date=expiration_date,
                     strike=float(strike or 0.0),
                     contract_type=side.upper(),
-                    last_price=mid,
+                    last_price=last_price,
                     volume=vol,
                     open_interest=open_interest,
                     notional=notional,

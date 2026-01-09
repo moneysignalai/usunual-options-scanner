@@ -37,12 +37,20 @@ def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
     expiration = _format_expiration(candidate.expiration_date)
     notional = _format_number(candidate.notional)
     volume = _fmt_int(candidate.volume)
-    if candidate.open_interest and candidate.open_interest > 0:
-        open_interest = _fmt_int(candidate.open_interest)
-        ratio = f"{candidate.volume_oi_ratio:.2f}"
+    if candidate.open_interest is None:
+        vol_oi_line = f"📊 Vol: {volume} (OI N/A)"
+    elif candidate.open_interest == 0:
+        vol_oi_line = f"📊 Vol/OI: {volume}/0 (Ratio N/A)"
     else:
-        open_interest = "N/A"
-        ratio = "N/A"
+        open_interest = _fmt_int(candidate.open_interest)
+        ratio_value = (
+            candidate.volume_oi_ratio
+            if candidate.volume_oi_ratio is not None
+            else 0.0
+        )
+        vol_oi_line = (
+            f"📊 Vol/OI: {volume}/{open_interest} (Ratio {ratio_value:.2f}x)"
+        )
     last_price = _format_number(candidate.last_price)
 
     if candidate.is_sweep:
@@ -64,7 +72,7 @@ def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
         title,
         f"🎯 Strike: {candidate.strike} | ⏳ Expires: {expiration}",
         f"💸 Premium: ${notional}",
-        f"📊 Vol/OI: {volume}/{open_interest} (Ratio {ratio})",
+        vol_oi_line,
         f"📈 Last: ${last_price} | DTE: {candidate.dte_days}",
         f"⭐ Score: {candidate.score:.2f}",
         "",
