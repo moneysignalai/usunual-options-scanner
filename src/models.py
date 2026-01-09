@@ -1,22 +1,14 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import List, Optional
+from typing import List, Optional, Any, Dict
 
-from pydantic.v1 import BaseModel, Field
-
-
-class UnderlyingSnapshot(BaseModel):
-    symbol: Optional[str] = None
-    last_price: Optional[float] = None
-
-    class Config:
-        extra = "ignore"
+from pydantic.v1 import BaseModel, Field, root_validator
 
 
 class OptionContractSnapshot(BaseModel):
-    options_ticker: Optional[str] = Field(None, alias="options_ticker")
-    underlying_ticker: Optional[str] = Field(None, alias="underlying_ticker")
+    options_ticker: Optional[str] = None
+    underlying_ticker: Optional[str] = None
     expiration_date: Optional[date] = None
     strike: Optional[float] = None
     contract_type: Optional[str] = None
@@ -24,24 +16,70 @@ class OptionContractSnapshot(BaseModel):
     bid: Optional[float] = None
     ask: Optional[float] = None
     volume: Optional[int] = None
-    open_interest: Optional[int] = Field(None, alias="open_interest")
+    open_interest: Optional[int] = None
     sweep: Optional[bool] = None
 
+    @root_validator(pre=True)
+    def normalize_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(values, dict):
+            return values
+
+        def _first(*keys: str) -> Any:
+            for key in keys:
+                if key in values and values[key] is not None:
+                    return values[key]
+            return None
+
+        if values.get("options_ticker") is None:
+            values["options_ticker"] = _first(
+                "symbol",
+                "ticker",
+                "options_ticker",
+                "contract_symbol",
+            )
+
+        if values.get("underlying_ticker") is None:
+            values["underlying_ticker"] = _first(
+                "underlying_symbol",
+                "underlying_ticker",
+            )
+
+        if values.get("expiration_date") is None:
+            values["expiration_date"] = _first(
+                "expiration",
+                "expiration_date",
+                "exp_date",
+            )
+
+        if values.get("strike") is None:
+            values["strike"] = _first("strike", "strike_price")
+
+        if values.get("last_price") is None:
+            values["last_price"] = _first("last", "last_price", "last_trade_price")
+
+        if values.get("open_interest") is None:
+            values["open_interest"] = _first("oi", "open_interest", "openInterest")
+
+        if values.get("volume") is None:
+            values["volume"] = _first("volume", "vol")
+
+        return values
+
     class Config:
-        allow_population_by_field_name = True
         extra = "ignore"
 
 
 class OptionChainSnapshot(BaseModel):
-    underlying: Optional[UnderlyingSnapshot] = None
-    options: List[OptionContractSnapshot] = Field(default_factory=list)
+    underlying_symbol: Optional[str] = None
+    timestamp: Optional[str] = None
+    contracts: List[OptionContractSnapshot] = Field(default_factory=list)
 
     class Config:
         extra = "ignore"
 
 
 class OptionChainSnapshotResponse(BaseModel):
-    data: OptionChainSnapshot
+    results: List[OptionChainSnapshot] = Field(default_factory=list)
 
     class Config:
         extra = "ignore"

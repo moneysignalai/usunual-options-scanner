@@ -102,15 +102,13 @@ def _scan_once(
             )
             continue
 
-        if snapshot_resp.data is None:
+        if not snapshot_resp or not snapshot_resp.results:
             logger.info("No option chain data returned | ticker=%s", ticker)
             continue
 
-        # snapshot_resp.data is an OptionChainSnapshot
-        candidates: List[UnusualOptionsCandidate] = find_unusual_activity(
-            snapshot_resp.data,
-            settings,
-        )
+        candidates: List[UnusualOptionsCandidate] = []
+        for result in snapshot_resp.results:
+            candidates.extend(find_unusual_activity(result, settings))
 
         if not candidates:
             logger.info("No unusual activity found | ticker=%s", ticker)
