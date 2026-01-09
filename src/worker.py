@@ -11,7 +11,7 @@ from .telegram_client import TelegramClient
 
 
 def main() -> None:
-    # Load config & logging _once_
+    # Load config & logging once
     settings = load_settings()
     setup_logging(settings)
     logger = get_logger("worker")
@@ -27,7 +27,9 @@ def main() -> None:
     telegram_client = None
     if settings.enable_telegram:
         if not settings.telegram_bot_token or not settings.telegram_chat_id:
-            logger.error("ENABLE_TELEGRAM=true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing")
+            logger.error(
+                "ENABLE_TELEGRAM=true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing"
+            )
         else:
             telegram_client = TelegramClient(
                 bot_token=settings.telegram_bot_token,
@@ -35,7 +37,12 @@ def main() -> None:
             )
             logger.info("Telegram alerts enabled")
 
-    alert_sinks = build_alert_sinks(logger=logger, telegram_client=telegram_client)
+    # ✅ FIX: include enable_telegram parameter
+    alert_sinks = build_alert_sinks(
+        logger=logger,
+        enable_telegram=settings.enable_telegram,
+        telegram_client=telegram_client,
+    )
 
     tickers = settings.ticker_universe
     cycle_count = 0
@@ -57,7 +64,10 @@ def main() -> None:
                     )
                     continue
                 except Exception:
-                    logger.exception("Unexpected error while fetching option chain | ticker=%s", symbol)
+                    logger.exception(
+                        "Unexpected error while fetching option chain | ticker=%s",
+                        symbol,
+                    )
                     continue
 
                 if snapshot is None:
@@ -66,7 +76,9 @@ def main() -> None:
                 try:
                     alerts = find_unusual_activity(symbol, snapshot, settings)
                 except Exception:
-                    logger.exception("Error in unusual-activity strategy | ticker=%s", symbol)
+                    logger.exception(
+                        "Error in unusual-activity strategy | ticker=%s", symbol
+                    )
                     continue
 
                 for alert in alerts:
@@ -75,7 +87,9 @@ def main() -> None:
                         try:
                             sink.send(alert)
                         except Exception:
-                            logger.exception("Error sending alert via sink | symbol=%s", symbol)
+                            logger.exception(
+                                "Error sending alert via sink | symbol=%s", symbol
+                            )
 
             duration = time.time() - cycle_start
             logger.info(
