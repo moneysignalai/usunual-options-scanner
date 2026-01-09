@@ -27,6 +27,12 @@ def _fmt_int(value: Optional[int]) -> str:
         return str(value)
 
 
+def _format_ratio(value: Optional[float]) -> str:
+    if value is None:
+        return "N/A"
+    return f"{value:.2f}x"
+
+
 def _alert_title(candidate: UnusualOptionsCandidate) -> str:
     if candidate.is_sweep:
         return f"📌 {candidate.underlying_ticker} — {candidate.contract_type} (SWEEP)"
@@ -43,14 +49,8 @@ def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
         vol_oi_line = f"📊 Vol/OI: {volume}/0 (Ratio N/A)"
     else:
         open_interest = _fmt_int(candidate.open_interest)
-        ratio_value = (
-            candidate.volume_oi_ratio
-            if candidate.volume_oi_ratio is not None
-            else 0.0
-        )
-        vol_oi_line = (
-            f"📊 Vol/OI: {volume}/{open_interest} (Ratio {ratio_value:.2f}x)"
-        )
+        ratio_text = _format_ratio(candidate.volume_oi_ratio)
+        vol_oi_line = f"📊 Vol/OI: {volume}/{open_interest} (Ratio {ratio_text})"
     last_price = _format_number(candidate.last_price)
 
     if candidate.is_sweep:

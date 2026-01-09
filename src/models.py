@@ -3,10 +3,42 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 
 
 class MassiveBaseModel(BaseModel):
+    @root_validator(pre=True)
+    def normalize_massive_keys(cls, values):
+        if not isinstance(values, dict):
+            return values
+
+        normalized = dict(values)
+
+        def _map_key(old_key: str, new_key: str) -> None:
+            if old_key in normalized and new_key not in normalized:
+                normalized[new_key] = normalized.pop(old_key)
+
+        _map_key("openInterest", "open_interest")
+        _map_key("openinterest", "open_interest")
+        _map_key("prevDay", "prev_day")
+        _map_key("lastTrade", "last_trade")
+        _map_key("lastQuote", "last_quote")
+        _map_key("impliedVolatility", "implied_volatility")
+        _map_key("breakEvenPrice", "break_even_price")
+        _map_key("sharesPerContract", "shares_per_contract")
+        _map_key("strikePrice", "strike_price")
+        _map_key("expirationDate", "expiration_date")
+        _map_key("contractType", "contract_type")
+        _map_key("exerciseStyle", "exercise_style")
+        _map_key("relativeVolume", "rvol")
+        _map_key("relative_volume", "rvol")
+        _map_key("last_price", "last")
+        _map_key("tradeCount", "trades_count")
+        _map_key("tradesCount", "trades_count")
+        _map_key("trades", "trades_count")
+
+        return normalized
+
     class Config:
         allow_population_by_field_name = True
         extra = "ignore"
@@ -19,7 +51,7 @@ class OptionContractDay(MassiveBaseModel):
     high: Optional[float] = None
     low: Optional[float] = None
     open: Optional[float] = None
-    open_interest: Optional[int] = Field(None, alias="openInterest")
+    open_interest: Optional[int] = Field(None, alias="open_interest")
     previous_close: Optional[float] = None
     volume: Optional[int] = None
     vwap: Optional[float] = None
@@ -73,7 +105,7 @@ class OptionContractSnapshot(MassiveBaseModel):
     last_price: Optional[float] = Field(None, alias="last")
     last_trade: Optional[OptionContractTrade] = None
     last_quote: Optional[OptionContractQuote] = None
-    open_interest: Optional[int] = Field(None, alias="openInterest")
+    open_interest: Optional[int] = Field(None, alias="open_interest")
     prev_day: Optional[OptionContractDay] = Field(None, alias="prev_day")
     rvol: Optional[float] = None
     volume: Optional[int] = None
