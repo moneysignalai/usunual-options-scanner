@@ -18,7 +18,7 @@ class Settings(BaseModel):
     """
 
     # Massive / market-data config
-    massive_api_key: str = Field(..., env="MASSIVE_API_KEY")
+    massive_api_key: str = Field("", env="MASSIVE_API_KEY")
     massive_base_url: str = "https://api.massive.com"
 
     # Scanner config
