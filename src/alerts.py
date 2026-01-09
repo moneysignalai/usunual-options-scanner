@@ -41,17 +41,28 @@ def _alert_title(candidate: UnusualOptionsCandidate) -> str:
 
 def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
     expiration = _format_expiration(candidate.expiration_date)
-    notional = _format_number(candidate.notional)
+    notional = f"{candidate.notional:,.2f}"
     volume = _fmt_int(candidate.volume)
-    if candidate.open_interest is None:
-        vol_oi_line = f"📊 Vol: {volume} (OI N/A)"
-    elif candidate.open_interest == 0:
+    open_interest_value = candidate.open_interest
+    if (
+        open_interest_value
+        and open_interest_value > 0
+        and candidate.volume_oi_ratio is not None
+    ):
+        open_interest = _fmt_int(open_interest_value)
+        vol_oi_line = (
+            f"📊 Vol/OI: {volume}/{open_interest} "
+            f"(Ratio {candidate.volume_oi_ratio:.2f}x)"
+        )
+    elif open_interest_value == 0:
         vol_oi_line = f"📊 Vol/OI: {volume}/0 (Ratio N/A)"
     else:
-        open_interest = _fmt_int(candidate.open_interest)
-        ratio_text = _format_ratio(candidate.volume_oi_ratio)
-        vol_oi_line = f"📊 Vol/OI: {volume}/{open_interest} (Ratio {ratio_text})"
-    last_price = _format_number(candidate.last_price)
+        vol_oi_line = f"📊 Vol: {volume} (OI N/A)"
+    last_price = (
+        "N/A"
+        if candidate.last_price is None
+        else f"{candidate.last_price:,.2f}"
+    )
 
     if candidate.is_sweep:
         header = "🚨 SWEEP DETECTED — UNUSUAL OPTIONS FLOW"

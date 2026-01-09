@@ -74,15 +74,10 @@ def _get_last_price(
     return None
 
 
-def _calculate_premium(
-    contract: OptionContractSnapshot,
-    last_price: Optional[float],
-    volume: int,
-) -> float:
-    shares_per_contract = contract.details.shares_per_contract or 100
+def _calculate_premium(last_price: Optional[float], volume: int) -> float:
     if last_price is None or volume <= 0:
         return 0.0
-    return last_price * volume * shares_per_contract
+    return float(last_price) * int(volume) * 100.0
 
 
 def _calculate_volume_oi_ratio(
@@ -153,7 +148,7 @@ def find_unusual_activity(
 
         midpoint = _calculate_mid_price(contract)
         last_price = _get_last_price(contract, midpoint)
-        notional = _calculate_premium(contract, last_price, volume)
+        notional = _calculate_premium(last_price, volume)
         if notional < thresholds.min_notional:
             continue
 
