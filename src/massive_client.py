@@ -151,16 +151,16 @@ class MassiveClient:
 
         if data == {}:
             logger.error("Massive 404 | ticker=%s | skipping", symbol)
-            return None
+            return OptionChainSnapshotResponse(results=[])
 
         if data is None:
             logger.error("Massive snapshot JSON error | ticker=%s", symbol)
-            return None
+            return OptionChainSnapshotResponse(results=[])
 
-        results = data.get("results") if isinstance(data, dict) else None
-        if not results:
-            logger.warning("Massive snapshot empty | ticker=%s", symbol)
-            return None
+        if isinstance(data, dict):
+            logger.debug("Raw keys: %s, sample=%s", list(data.keys()), str(data)[:400])
+        else:
+            logger.debug("Raw snapshot payload is %s | sample=%s", type(data), str(data)[:400])
 
         try:
             snapshot = OptionChainSnapshotResponse.parse_obj(data)
@@ -172,16 +172,23 @@ class MassiveClient:
                 f"Failed to parse option chain snapshot for {symbol}: {exc}"
             ) from exc
 
-        # Extra guardrail logging so you can see how much data you got
-        contracts_count = 0
-        try:
-            first_result = snapshot.results[0] if snapshot.results else None
-            if first_result and first_result.contracts is not None:
-                contracts_count = len(first_result.contracts)
-        except Exception:
-            # Don't let logging issues break the worker
-            logger.exception(
-                "Error computing contracts count for ticker=%s", symbol
+        results = snapshot.results or []
+        contracts = results[0].contracts if results and results[0].contracts else []
+        contracts_count = len(contracts)
+
+        raw_contract_count = 0
+        if isinstance(data, dict):
+            raw_results = data.get("results")
+            if isinstance(raw_results, list) and raw_results:
+                raw_contracts = raw_results[0].get("contracts")
+                if isinstance(raw_contracts, list):
+                    raw_contract_count = len(raw_contracts)
+
+        if raw_contract_count and contracts_count == 0:
+            logger.warning(
+                "Parsed zero contracts despite raw payload | ticker=%s | raw_count=%d",
+                symbol,
+                raw_contract_count,
             )
 
         logger.info(
