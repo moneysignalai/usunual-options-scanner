@@ -6,6 +6,17 @@ from typing import List, Optional, Any, Dict
 from pydantic.v1 import BaseModel, Field, root_validator
 
 
+class UnderlyingAsset(BaseModel):
+    symbol: Optional[str] = None
+    ticker: Optional[str] = None
+    name: Optional[str] = None
+    exchange: Optional[str] = None
+    type: Optional[str] = None
+
+    class Config:
+        extra = "ignore"
+
+
 class OptionContractSnapshot(BaseModel):
     options_ticker: Optional[str] = None
     underlying_ticker: Optional[str] = None
@@ -94,16 +105,34 @@ class OptionContractSnapshot(BaseModel):
 
 
 class OptionChainSnapshot(BaseModel):
+    underlying_asset: Optional[UnderlyingAsset] = None
     underlying_symbol: Optional[str] = None
     timestamp: Optional[str] = None
-    contracts: List[OptionContractSnapshot] = Field(default_factory=list)
+    contracts: Optional[List[OptionContractSnapshot]] = Field(default_factory=list)
+
+    @root_validator(pre=True)
+    def normalize_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(values, dict):
+            return values
+
+        if values.get("underlying_symbol") is None:
+            asset = values.get("underlying_asset") or values.get("underlying")
+            if isinstance(asset, dict):
+                values["underlying_symbol"] = asset.get("symbol") or asset.get("ticker")
+            else:
+                values["underlying_symbol"] = values.get("underlying_symbol")
+
+        if values.get("contracts") is None:
+            values["contracts"] = []
+
+        return values
 
     class Config:
         extra = "ignore"
 
 
 class OptionChainSnapshotResponse(BaseModel):
-    results: List[OptionChainSnapshot] = Field(default_factory=list)
+    results: Optional[List[OptionChainSnapshot]] = Field(default_factory=list)
 
     class Config:
         extra = "ignore"

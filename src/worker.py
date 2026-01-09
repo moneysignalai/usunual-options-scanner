@@ -4,13 +4,13 @@ import logging
 import signal
 import sys
 import time
+from datetime import date
 from typing import Iterable, List
 
 from .alerts import AlertSink, build_alert_sinks
 from .config import Settings, load_settings
 from .massive_client import MassiveClient
-from .models import UnusualOptionsCandidate
-from .strategy import find_unusual_activity
+from .models import OptionContractSnapshot, UnusualOptionsCandidate
 from .telegram_client import TelegramClient
 
 
@@ -112,13 +112,16 @@ def _scan_once(
             )
             continue
 
-        if not snapshot_resp or not snapshot_resp.results:
+        if snapshot_resp is None:
+            logger.info("No snapshot | ticker=%s", ticker)
+            continue
+
+        results = snapshot_resp.results or []
+        if not results:
             logger.info("No snapshot data for ticker=%s", ticker)
             continue
 
-        contract_count = sum(
-            len(result.contracts) for result in snapshot_resp.results if result.contracts
-        )
+        contract_count = sum(len(result.contracts or []) for result in results)
         logger.info(
             "Snapshot loaded | ticker=%s | contract_count=%s",
             ticker,
@@ -126,8 +129,80 @@ def _scan_once(
         )
 
         candidates: List[UnusualOptionsCandidate] = []
-        for result in snapshot_resp.results:
-            candidates.extend(find_unusual_activity(result, settings))
+        rejection_logs = 0
+        today = date.today()
+
+        for result in results:
+            contracts = result.contracts or []
+            if not contracts:
+                continue
+
+            for contract in contracts:
+                reasons: List[str] = []
+
+                dte_days = None
+                if contract.expiration_date:
+                    dte_days = (contract.expiration_date - today).days
+                    if dte_days < settings.min_time_to_expiry_days:
+                        reasons.append("dte")
+                else:
+                    reasons.append("missing_expiry")
+
+                volume = contract.volume or 0
+                if volume < settings.min_contract_volume:
+                    reasons.append("volume")
+
+                oi = contract.open_interest or 0
+                if oi == 0:
+                    reasons.append("zero_oi")
+
+                price = _resolve_price(contract)
+                if price is None:
+                    reasons.append("price")
+
+                notional = _calculate_notional(price, oi or volume)
+                if notional < settings.min_notional:
+                    reasons.append("notional")
+
+                ratio = _calculate_ratio(volume, oi)
+                if ratio < settings.min_volume_oi_ratio:
+                    reasons.append("vol/oi")
+
+                if reasons:
+                    if settings.debug_mode and rejection_logs < 5:
+                        logger.debug(
+                            "Rejected %s reasons=%s",
+                            contract.options_ticker or "UNKNOWN",
+                            reasons,
+                        )
+                        rejection_logs += 1
+                    continue
+
+                candidate = _build_candidate(
+                    contract=contract,
+                    underlying=result.underlying_symbol or contract.underlying_ticker or ticker,
+                    notional=notional,
+                    ratio=ratio,
+                    dte_days=dte_days or 0,
+                )
+                candidates.append(candidate)
+
+                logger.info(
+                    "ALERT EMITTED | %s %s | notional=%s",
+                    ticker,
+                    candidate.options_ticker,
+                    notional,
+                )
+                for sink in sinks:
+                    try:
+                        sink.send(candidate)
+                    except Exception as exc:
+                        logger.exception(
+                            "Alert sink failed | ticker=%s | sink=%s | error=%s",
+                            ticker,
+                            sink.__class__.__name__,
+                            exc,
+                        )
 
         if not candidates:
             if settings.debug_mode:
@@ -135,24 +210,67 @@ def _scan_once(
             else:
                 logger.info("No unusual activity found | ticker=%s", ticker)
             continue
-
         logger.info(
             "Unusual activity detected | ticker=%s | count=%d",
             ticker,
             len(candidates),
         )
 
-        for candidate in candidates:
-            for sink in sinks:
-                try:
-                    sink.send(candidate)
-                except Exception as exc:
-                    logger.exception(
-                        "Alert sink failed | ticker=%s | sink=%s | error=%s",
-                        ticker,
-                        sink.__class__.__name__,
-                        exc,
-                    )
+
+def _resolve_price(contract: OptionContractSnapshot) -> float | None:
+    if contract.bid is not None and contract.ask is not None:
+        return (contract.bid + contract.ask) / 2
+    if contract.ask is not None:
+        return contract.ask
+    if contract.bid is not None:
+        return contract.bid
+    return contract.last_price
+
+
+def _calculate_notional(price: float | None, size: int) -> float:
+    if price is None or size <= 0:
+        return 0.0
+    return price * size * 100
+
+
+def _calculate_ratio(volume: int, open_interest: int) -> float:
+    if open_interest <= 0:
+        return 0.0
+    return volume / open_interest
+
+
+def _build_candidate(
+    contract: OptionContractSnapshot,
+    underlying: str,
+    notional: float,
+    ratio: float,
+    dte_days: int,
+) -> UnusualOptionsCandidate:
+    contract_type = (contract.contract_type or "").upper()
+    direction = "UNKNOWN"
+    if contract_type == "CALL":
+        direction = "BULLISH"
+    elif contract_type == "PUT":
+        direction = "BEARISH"
+
+    return UnusualOptionsCandidate(
+        options_ticker=contract.options_ticker or "",
+        underlying_ticker=underlying,
+        direction=direction,
+        expiration_date=contract.expiration_date,
+        strike=float(contract.strike or 0.0),
+        contract_type=contract_type or "UNKNOWN",
+        last_price=contract.last_price,
+        volume=contract.volume,
+        open_interest=contract.open_interest,
+        notional=notional,
+        volume_oi_ratio=ratio,
+        dte_days=dte_days,
+        score=notional + ratio,
+        is_sweep=bool(contract.sweep),
+        flow_type="SWEEP" if contract.sweep else "STANDARD",
+        debug_alert=False,
+    )
 
 
 def main() -> None:
@@ -162,14 +280,12 @@ def main() -> None:
     settings = load_settings()
     logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
     logger.info(
-        "Strategy thresholds | min_notional=%s | min_volume=%s | min_open_interest=%s | "
-        "min_volume_oi_ratio=%s | dte_range=%s-%s | debug_mode=%s",
-        settings.unusual_min_notional,
-        settings.unusual_min_volume,
-        settings.unusual_min_open_interest,
-        settings.unusual_min_volume_oi_ratio,
-        settings.unusual_min_dte_days,
-        settings.unusual_max_dte_days,
+        "Strategy thresholds | min_notional=%s | min_contract_volume=%s | "
+        "min_volume_oi_ratio=%s | min_time_to_expiry_days=%s | debug_mode=%s",
+        settings.min_notional,
+        settings.min_contract_volume,
+        settings.min_volume_oi_ratio,
+        settings.min_time_to_expiry_days,
         settings.debug_mode,
     )
     client = _build_massive_client(settings)

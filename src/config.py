@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     scan_interval_seconds: int = Field(60, env="SCAN_INTERVAL_SECONDS")
     debug_mode: bool = Field(False, env="DEBUG_MODE")
 
+    # --- Core filter thresholds ---
+    min_notional: float = Field(10000.0, env="MIN_NOTIONAL")
+    min_contract_volume: int = Field(1, env="MIN_CONTRACT_VOLUME")
+    min_volume_oi_ratio: float = Field(0.1, env="MIN_VOLUME_OI_RATIO")
+    min_time_to_expiry_days: int = Field(0, env="MIN_TIME_TO_EXPIRY_DAYS")
+
     # --- Telegram ---
     enable_telegram: bool = Field(False, env="ENABLE_TELEGRAM")
     telegram_bot_token: Optional[str] = Field(None, env="TELEGRAM_BOT_TOKEN")
@@ -135,11 +141,18 @@ def load_settings() -> Settings:
         print("WARNING: MASSIVE_API_KEY is empty – Massive API calls will fail.")
 
     print(
-        "Config loaded | tickers=%s | interval=%ss | telegram=%s"
+        "Config loaded | tickers=%s | interval=%ss | telegram=%s | "
+        "min_notional=%s | min_contract_volume=%s | min_volume_oi_ratio=%s | "
+        "min_time_to_expiry_days=%s | debug_mode=%s"
         % (
             ",".join(settings.ticker_universe),
             settings.scan_interval_seconds,
             settings.enable_telegram,
+            settings.min_notional,
+            settings.min_contract_volume,
+            settings.min_volume_oi_ratio,
+            settings.min_time_to_expiry_days,
+            settings.debug_mode,
         )
     )
     return settings
