@@ -11,60 +11,81 @@ from .telegram_client import TelegramClient
 
 
 def main() -> None:
+    # Load config & logging _once_
     settings = load_settings()
     setup_logging(settings)
     logger = get_logger("worker")
 
-    if not settings.massive_api_key:
-        logger.error("Missing MASSIVE_API_KEY; exiting")
-        return
-
-    client = MassiveClient(settings.massive_api_key, settings.massive_base_url, logger=logger)
-    telegram_client = None
-    if settings.enable_telegram and settings.telegram_bot_token and settings.telegram_chat_id:
-        telegram_client = TelegramClient(
-            settings.telegram_bot_token,
-            settings.telegram_chat_id,
-            logger=logger,
-        )
-    elif settings.enable_telegram:
-        logger.error("Telegram enabled but missing token or chat id")
-
-    sinks = list(build_alert_sinks(logger, settings.enable_telegram, telegram_client))
-
     logger.info(
-        "Worker starting | tickers=%s | interval=%s",
+        "Worker starting | tickers=%s | interval=%ss",
         ",".join(settings.ticker_universe),
         settings.scan_interval_seconds,
     )
 
+    client = MassiveClient(settings=settings)
+
+    telegram_client = None
+    if settings.enable_telegram:
+        if not settings.telegram_bot_token or not settings.telegram_chat_id:
+            logger.error("ENABLE_TELEGRAM=true but TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing")
+        else:
+            telegram_client = TelegramClient(
+                bot_token=settings.telegram_bot_token,
+                chat_id=settings.telegram_chat_id,
+            )
+            logger.info("Telegram alerts enabled")
+
+    alert_sinks = build_alert_sinks(logger=logger, telegram_client=telegram_client)
+
+    tickers = settings.ticker_universe
+    cycle_count = 0
+
     try:
         while True:
-            cycle_count = 0
-            alert_count = 0
             cycle_start = time.time()
+            alert_count = 0
+            cycle_count += 1
 
-            for ticker in settings.ticker_universe:
-                cycle_count += 1
+            for symbol in tickers:
                 try:
-                    chain = client.get_option_chain_snapshot(ticker)
-                    candidates = find_unusual_activity(chain, settings)
-                    for candidate in candidates:
-                        for sink in sinks:
-                            sink.send(candidate)
-                        alert_count += 1
-                except MassiveAPIError:
-                    logger.error("Skipping ticker due to Massive API error | ticker=%s", ticker)
+                    snapshot = client.get_option_chain_snapshot(symbol)
+                except MassiveAPIError as exc:
+                    logger.error(
+                        "Skipping ticker due to Massive API error | ticker=%s | error=%s",
+                        symbol,
+                        exc,
+                    )
+                    continue
                 except Exception:
-                    logger.exception("Unhandled error processing ticker | ticker=%s", ticker)
+                    logger.exception("Unexpected error while fetching option chain | ticker=%s", symbol)
+                    continue
+
+                if snapshot is None:
+                    continue
+
+                try:
+                    alerts = find_unusual_activity(symbol, snapshot, settings)
+                except Exception:
+                    logger.exception("Error in unusual-activity strategy | ticker=%s", symbol)
+                    continue
+
+                for alert in alerts:
+                    alert_count += 1
+                    for sink in alert_sinks:
+                        try:
+                            sink.send(alert)
+                        except Exception:
+                            logger.exception("Error sending alert via sink | symbol=%s", symbol)
 
             duration = time.time() - cycle_start
             logger.info(
-                "Scan cycle complete | tickers=%s | alerts=%s | duration=%.2fs",
+                "Scan cycle complete | cycle=%s | tickers=%s | alerts=%s | duration=%.2fs",
                 cycle_count,
+                len(tickers),
                 alert_count,
                 duration,
             )
+
             time.sleep(settings.scan_interval_seconds)
     finally:
         client.close()
