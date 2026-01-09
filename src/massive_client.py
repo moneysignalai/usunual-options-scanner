@@ -147,49 +147,65 @@ class MassiveClient:
         try:
             data = self._get(f"/v3/snapshot/options/{symbol}", params=params)
         except (httpx.RequestError, RetryError, MassiveAPIError) as exc:
-            raise MassiveAPIError(str(exc)) from exc
+            logger.error(
+                "Massive snapshot request failed | ticker=%s | error=%s",
+                symbol,
+                exc,
+            )
+            return None
 
         if data == {}:
             logger.error("Massive 404 | ticker=%s | skipping", symbol)
-            return OptionChainSnapshotResponse(results=[])
+            return None
 
         if data is None:
             logger.error("Massive snapshot JSON error | ticker=%s", symbol)
-            return OptionChainSnapshotResponse(results=[])
+            return None
 
-        if isinstance(data, dict):
-            logger.debug("Raw keys: %s, sample=%s", list(data.keys()), str(data)[:400])
-        else:
-            logger.debug("Raw snapshot payload is %s | sample=%s", type(data), str(data)[:400])
+        if self._settings.debug_mode and symbol.upper() in {"SPY", "QQQ", "NVDA", "AAPL"}:
+            if isinstance(data, dict):
+                logger.debug(
+                    "Snapshot root keys | ticker=%s | keys=%s",
+                    symbol,
+                    list(data.keys()),
+                )
+                logger.debug(
+                    "Snapshot sample | ticker=%s | sample=%s",
+                    symbol,
+                    str(data)[:400],
+                )
+                raw_results = data.get("results") or data.get("data")
+                if isinstance(raw_results, list) and raw_results:
+                    raw_contracts = raw_results[0].get("contracts") or raw_results[0].get(
+                        "options"
+                    )
+                    if isinstance(raw_contracts, list) and raw_contracts:
+                        logger.debug(
+                            "Snapshot contract keys | ticker=%s | keys=%s",
+                            symbol,
+                            list(raw_contracts[0].keys()),
+                        )
+            else:
+                logger.debug(
+                    "Raw snapshot payload is %s | sample=%s",
+                    type(data),
+                    str(data)[:400],
+                )
 
         try:
             snapshot = OptionChainSnapshotResponse.parse_obj(data)
         except Exception as exc:
-            logger.exception(
-                "Failed to parse option chain snapshot | ticker=%s", symbol
+            logger.error(
+                "Failed to parse option chain snapshot | ticker=%s | error=%s",
+                symbol,
+                exc,
             )
-            raise MassiveAPIError(
-                f"Failed to parse option chain snapshot for {symbol}: {exc}"
-            ) from exc
+            return None
 
         results = snapshot.results or []
-        contracts = results[0].contracts if results and results[0].contracts else []
-        contracts_count = len(contracts)
-
-        raw_contract_count = 0
-        if isinstance(data, dict):
-            raw_results = data.get("results")
-            if isinstance(raw_results, list) and raw_results:
-                raw_contracts = raw_results[0].get("contracts")
-                if isinstance(raw_contracts, list):
-                    raw_contract_count = len(raw_contracts)
-
-        if raw_contract_count and contracts_count == 0:
-            logger.warning(
-                "Parsed zero contracts despite raw payload | ticker=%s | raw_count=%d",
-                symbol,
-                raw_contract_count,
-            )
+        contracts_count = sum(
+            len(result.contracts or []) for result in results if result is not None
+        )
 
         logger.info(
             "Massive snapshot OK | ticker=%s | contract_count=%s",

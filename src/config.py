@@ -31,12 +31,6 @@ class Settings(BaseSettings):
     scan_interval_seconds: int = Field(60, env="SCAN_INTERVAL_SECONDS")
     debug_mode: bool = Field(False, env="DEBUG_MODE")
 
-    # --- Core filter thresholds ---
-    min_notional: float = Field(10000.0, env="MIN_NOTIONAL")
-    min_contract_volume: int = Field(1, env="MIN_CONTRACT_VOLUME")
-    min_volume_oi_ratio: float = Field(0.1, env="MIN_VOLUME_OI_RATIO")
-    min_time_to_expiry_days: int = Field(0, env="MIN_TIME_TO_EXPIRY_DAYS")
-
     # --- Telegram ---
     enable_telegram: bool = Field(False, env="ENABLE_TELEGRAM")
     telegram_bot_token: Optional[str] = Field(None, env="TELEGRAM_BOT_TOKEN")
@@ -58,6 +52,17 @@ class Settings(BaseSettings):
     unusual_min_volume: int = Field(0, env="UNUSUAL_MIN_VOLUME")
     unusual_min_open_interest: int = Field(0, env="UNUSUAL_MIN_OPEN_INTEREST")
     unusual_min_volume_oi_ratio: float = Field(1.0, env="UNUSUAL_MIN_VOLUME_OI_RATIO")
+    unusual_min_trade_count: int = Field(0, env="UNUSUAL_MIN_TRADE_COUNT")
+    unusual_min_trade_size: int = Field(0, env="UNUSUAL_MIN_TRADE_SIZE")
+    unusual_min_rvol: float = Field(0.0, env="UNUSUAL_MIN_RVOL")
+    unusual_min_iv_pctile: float = Field(0.0, env="UNUSUAL_MIN_IV_PCTILE")
+    unusual_max_otm_pct: float = Field(0.0, env="UNUSUAL_MAX_OTM_PCT")
+    unusual_spread_threshold_bps: float = Field(
+        0.0, env="UNUSUAL_SPREAD_THRESHOLD_BPS"
+    )
+    unusual_min_unusual_score: float = Field(
+        0.0, env="UNUSUAL_MIN_UNUSUAL_SCORE"
+    )
 
     # ---------- Validators ----------
 
@@ -142,16 +147,18 @@ def load_settings() -> Settings:
 
     print(
         "Config loaded | tickers=%s | interval=%ss | telegram=%s | "
-        "min_notional=%s | min_contract_volume=%s | min_volume_oi_ratio=%s | "
-        "min_time_to_expiry_days=%s | debug_mode=%s"
+        "unusual_min_notional=%s | unusual_min_volume=%s | "
+        "unusual_min_volume_oi_ratio=%s | unusual_min_dte_days=%s | "
+        "unusual_max_dte_days=%s | debug_mode=%s"
         % (
             ",".join(settings.ticker_universe),
             settings.scan_interval_seconds,
             settings.enable_telegram,
-            settings.min_notional,
-            settings.min_contract_volume,
-            settings.min_volume_oi_ratio,
-            settings.min_time_to_expiry_days,
+            settings.unusual_min_notional,
+            settings.unusual_min_volume,
+            settings.unusual_min_volume_oi_ratio,
+            settings.unusual_min_dte_days,
+            settings.unusual_max_dte_days,
             settings.debug_mode,
         )
     )
