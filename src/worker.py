@@ -89,7 +89,17 @@ def _scan_once(
         logger.warning("No tickers configured in TICKER_UNIVERSE; nothing to scan.")
         return
 
-    logger.info("Starting scan cycle | tickers=%s", ",".join(tickers))
+    # PIPELINE:
+    # 1) fetch snapshot
+    # 2) flatten contracts (strategy)
+    # 3) filter by DTE/notional/volume/OI/ratio
+    # 4) build Alert objects (UnusualOptionsCandidate)
+    # 5) send to sinks
+    logger.info(
+        "Starting scan cycle | tickers=%s | ticker_count=%d",
+        ",".join(tickers),
+        len(tickers),
+    )
 
     for ticker in tickers:
         try:
@@ -103,15 +113,27 @@ def _scan_once(
             continue
 
         if not snapshot_resp or not snapshot_resp.results:
-            logger.info("No option chain data returned | ticker=%s", ticker)
+            logger.info("No snapshot data for ticker=%s", ticker)
             continue
+
+        contract_count = sum(
+            len(result.contracts) for result in snapshot_resp.results if result.contracts
+        )
+        logger.info(
+            "Snapshot loaded | ticker=%s | contract_count=%s",
+            ticker,
+            contract_count,
+        )
 
         candidates: List[UnusualOptionsCandidate] = []
         for result in snapshot_resp.results:
             candidates.extend(find_unusual_activity(result, settings))
 
         if not candidates:
-            logger.info("No unusual activity found | ticker=%s", ticker)
+            if settings.debug_mode:
+                logger.info("No contracts passed filters | ticker=%s", ticker)
+            else:
+                logger.info("No unusual activity found | ticker=%s", ticker)
             continue
 
         logger.info(
@@ -138,6 +160,18 @@ def main() -> None:
     logger.info("Worker starting up")
 
     settings = load_settings()
+    logger.setLevel(getattr(logging, settings.log_level.upper(), logging.INFO))
+    logger.info(
+        "Strategy thresholds | min_notional=%s | min_volume=%s | min_open_interest=%s | "
+        "min_volume_oi_ratio=%s | dte_range=%s-%s | debug_mode=%s",
+        settings.unusual_min_notional,
+        settings.unusual_min_volume,
+        settings.unusual_min_open_interest,
+        settings.unusual_min_volume_oi_ratio,
+        settings.unusual_min_dte_days,
+        settings.unusual_max_dte_days,
+        settings.debug_mode,
+    )
     client = _build_massive_client(settings)
     sinks = list(_build_sinks(settings))
 

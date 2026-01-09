@@ -24,6 +24,12 @@ def _format_int(value: Optional[int]) -> str:
     return f"{value}"
 
 
+def _alert_title(candidate: UnusualOptionsCandidate) -> str:
+    if candidate.is_sweep:
+        return f"📌 {candidate.underlying_ticker} — {candidate.contract_type} (SWEEP)"
+    return f"📌 {candidate.underlying_ticker} — {candidate.contract_type}"
+
+
 def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
     expiration = _format_expiration(candidate.expiration_date)
     notional = _format_number(candidate.notional)
@@ -34,12 +40,16 @@ def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
 
     if candidate.is_sweep:
         header = "🚨 SWEEP DETECTED — UNUSUAL OPTIONS FLOW"
-        title = f"📌 {candidate.underlying_ticker} — {candidate.contract_type} (SWEEP)"
+        title = _alert_title(candidate)
         footer = "#FlowBot #UnusualOptions #Sweep"
     else:
         header = "📢 UNUSUAL OPTIONS FLOW DETECTED"
-        title = f"📌 {candidate.underlying_ticker} — {candidate.contract_type}"
+        title = _alert_title(candidate)
         footer = "#FlowBot #UnusualOptions"
+
+    if candidate.debug_alert:
+        header = f"[DEBUG ALERT] {header}"
+        footer = f"{footer} #Debug"
 
     lines = [
         header,
@@ -74,6 +84,12 @@ class ConsoleAlertSink(AlertSink):
             candidate.is_sweep,
             message.replace("\n", " | "),
         )
+        self._logger.info(
+            "Alert sent via %s | ticker=%s | title=%s",
+            self.__class__.__name__,
+            candidate.underlying_ticker,
+            _alert_title(candidate),
+        )
 
 
 class TelegramAlertSink(AlertSink):
@@ -85,6 +101,12 @@ class TelegramAlertSink(AlertSink):
         message = format_alert_message(candidate)
         try:
             self._client.send_message(message)
+            self._logger.info(
+                "Alert sent via %s | ticker=%s | title=%s",
+                self.__class__.__name__,
+                candidate.underlying_ticker,
+                _alert_title(candidate),
+            )
         except TelegramDeliveryError as exc:
             self._logger.error(
                 "Telegram alert failed | ticker=%s | error=%s",
