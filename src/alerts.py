@@ -37,8 +37,12 @@ def format_alert_message(candidate: UnusualOptionsCandidate) -> str:
     expiration = _format_expiration(candidate.expiration_date)
     notional = _format_number(candidate.notional)
     volume = _fmt_int(candidate.volume)
-    open_interest = _fmt_int(candidate.open_interest)
-    ratio = f"{candidate.volume_oi_ratio:.2f}"
+    if candidate.open_interest and candidate.open_interest > 0:
+        open_interest = _fmt_int(candidate.open_interest)
+        ratio = f"{candidate.volume_oi_ratio:.2f}"
+    else:
+        open_interest = "N/A"
+        ratio = "N/A"
     last_price = _format_number(candidate.last_price)
 
     if candidate.is_sweep:
