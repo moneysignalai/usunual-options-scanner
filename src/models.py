@@ -49,19 +49,43 @@ class OptionContractSnapshot(BaseModel):
                 "expiration",
                 "expiration_date",
                 "exp_date",
+                "expiry",
             )
 
         if values.get("strike") is None:
             values["strike"] = _first("strike", "strike_price")
 
         if values.get("last_price") is None:
-            values["last_price"] = _first("last", "last_price", "last_trade_price")
+            values["last_price"] = _first(
+                "last",
+                "last_price",
+                "last_trade_price",
+                "mark",
+                "mid",
+            )
+
+        if values.get("bid") is None:
+            values["bid"] = _first("bid", "bid_price", "best_bid")
+
+        if values.get("ask") is None:
+            values["ask"] = _first("ask", "ask_price", "best_ask")
+
+        if values.get("contract_type") is None:
+            values["contract_type"] = _first(
+                "contract_type",
+                "option_type",
+                "type",
+                "right",
+            )
 
         if values.get("open_interest") is None:
             values["open_interest"] = _first("oi", "open_interest", "openInterest")
 
         if values.get("volume") is None:
             values["volume"] = _first("volume", "vol")
+
+        if values.get("sweep") is None:
+            values["sweep"] = _first("sweep", "is_sweep", "isSweep")
 
         return values
 
@@ -102,6 +126,7 @@ class UnusualOptionsCandidate(BaseModel):
 
     is_sweep: bool = False
     flow_type: str = "STANDARD"
+    debug_alert: bool = False
 
     class Config:
         extra = "ignore"

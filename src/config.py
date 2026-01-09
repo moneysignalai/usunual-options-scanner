@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # --- Scanner behaviour ---
     scan_interval_seconds: int = Field(60, env="SCAN_INTERVAL_SECONDS")
+    debug_mode: bool = Field(False, env="DEBUG_MODE")
 
     # --- Telegram ---
     enable_telegram: bool = Field(False, env="ENABLE_TELEGRAM")
@@ -48,6 +49,8 @@ class Settings(BaseSettings):
     unusual_max_dte_days: int = Field(30, env="UNUSUAL_MAX_DTE_DAYS")
     unusual_min_dte_days: int = Field(1, env="UNUSUAL_MIN_DTE_DAYS")
     unusual_min_notional: float = Field(100000.0, env="UNUSUAL_MIN_NOTIONAL")
+    unusual_min_volume: int = Field(0, env="UNUSUAL_MIN_VOLUME")
+    unusual_min_open_interest: int = Field(0, env="UNUSUAL_MIN_OPEN_INTEREST")
     unusual_min_volume_oi_ratio: float = Field(1.0, env="UNUSUAL_MIN_VOLUME_OI_RATIO")
 
     # ---------- Validators ----------
@@ -83,6 +86,19 @@ class Settings(BaseSettings):
     def parse_enable_telegram(cls, v: Any) -> bool:
         """
         Render will give us strings for booleans; normalize them.
+        """
+        if isinstance(v, bool):
+            return v
+        if v is None:
+            return False
+        if isinstance(v, str):
+            return v.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(v)
+
+    @validator("debug_mode", pre=True)
+    def parse_debug_mode(cls, v: Any) -> bool:
+        """
+        Normalize DEBUG_MODE from env.
         """
         if isinstance(v, bool):
             return v
