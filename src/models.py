@@ -3,23 +3,30 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
-class OptionContractDay(BaseModel):
+class MassiveBaseModel(BaseModel):
+    class Config:
+        allow_population_by_field_name = True
+        extra = "ignore"
+
+
+class OptionContractDay(MassiveBaseModel):
     change: Optional[float] = None
     change_percent: Optional[float] = None
     close: Optional[float] = None
     high: Optional[float] = None
     low: Optional[float] = None
     open: Optional[float] = None
+    open_interest: Optional[int] = Field(None, alias="openInterest")
     previous_close: Optional[float] = None
     volume: Optional[int] = None
     vwap: Optional[float] = None
     last_updated: Optional[int] = None
 
 
-class OptionContractDetails(BaseModel):
+class OptionContractDetails(MassiveBaseModel):
     contract_type: Optional[str] = None
     exercise_style: Optional[str] = None
     expiration_date: Optional[str] = None
@@ -28,14 +35,14 @@ class OptionContractDetails(BaseModel):
     ticker: str
 
 
-class OptionContractGreeks(BaseModel):
+class OptionContractGreeks(MassiveBaseModel):
     delta: Optional[float] = None
     gamma: Optional[float] = None
     theta: Optional[float] = None
     vega: Optional[float] = None
 
 
-class OptionContractQuote(BaseModel):
+class OptionContractQuote(MassiveBaseModel):
     ask: Optional[float] = None
     ask_size: Optional[int] = None
     bid: Optional[float] = None
@@ -45,22 +52,35 @@ class OptionContractQuote(BaseModel):
     timeframe: Optional[str] = None
 
 
-class UnderlyingAssetSnapshot(BaseModel):
+class OptionContractTrade(MassiveBaseModel):
+    price: Optional[float] = None
+    size: Optional[int] = None
+    exchange: Optional[int] = None
+    last_updated: Optional[int] = None
+
+
+class UnderlyingAssetSnapshot(MassiveBaseModel):
     ticker: Optional[str] = None
     last_quote: Optional[OptionContractQuote] = None
 
 
-class OptionContractSnapshot(BaseModel):
+class OptionContractSnapshot(MassiveBaseModel):
     break_even_price: Optional[float] = None
     day: Optional[OptionContractDay] = None
     details: OptionContractDetails
     greeks: Optional[OptionContractGreeks] = None
     implied_volatility: Optional[float] = None
+    last_price: Optional[float] = Field(None, alias="last")
+    last_trade: Optional[OptionContractTrade] = None
     last_quote: Optional[OptionContractQuote] = None
+    open_interest: Optional[int] = Field(None, alias="openInterest")
+    prev_day: Optional[OptionContractDay] = Field(None, alias="prev_day")
+    rvol: Optional[float] = None
+    volume: Optional[int] = None
     underlying_asset: Optional[UnderlyingAssetSnapshot] = None
 
 
-class OptionChainSnapshotResponse(BaseModel):
+class OptionChainSnapshotResponse(MassiveBaseModel):
     results: List[OptionContractSnapshot] = []
 
 
@@ -75,7 +95,7 @@ class UnusualOptionsCandidate(BaseModel):
     volume: Optional[int]
     open_interest: Optional[int]
     notional: float
-    volume_oi_ratio: float
+    volume_oi_ratio: Optional[float]
     dte_days: int
     score: float
 
