@@ -130,6 +130,7 @@ class UnusualOptionsCandidate(BaseModel):
     open_interest: Optional[int]
     notional: float
     volume_oi_ratio: Optional[float]
+    rvol: Optional[float]
     dte_days: int
     score: float
 

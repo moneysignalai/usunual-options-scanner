@@ -307,6 +307,7 @@ def _scan_once(
                     open_interest=open_interest,
                     notional=notional,
                     volume_oi_ratio=volume_oi_ratio,
+                    rvol=contract.rvol,
                     dte_days=dte_days,
                     score=score,
                 )
@@ -323,6 +324,21 @@ def _scan_once(
                 ticker,
                 candidate.options_ticker,
                 candidate.notional,
+            )
+            logger.debug(
+                "Alert debug | ticker=%s side=%s strike=%s exp=%s notional=%s "
+                "vol=%s oi=%s vol_oi_ratio=%s rvol=%s dte=%s score=%s",
+                candidate.underlying_ticker,
+                candidate.contract_type,
+                candidate.strike,
+                candidate.expiration_date.strftime("%Y-%m-%d"),
+                candidate.notional,
+                candidate.volume,
+                candidate.open_interest,
+                candidate.volume_oi_ratio,
+                candidate.rvol,
+                candidate.dte_days,
+                candidate.score,
             )
             for sink in sinks:
                 try:

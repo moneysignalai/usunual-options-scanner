@@ -88,6 +88,11 @@ def _calculate_volume_oi_ratio(
     return None
 
 
+# NOTE: Score blends notional ($ premium), relative volume (rvol), volume/OI,
+# and DTE (days to expiration). With current weights, the effective range is
+# roughly 0–9.5 (e.g., 10*0.4 + 10*0.3 + 10*0.2 + 5*0.1 = 9.5). Keep
+# UNUSUAL_MIN_UNUSUAL_SCORE within this range (e.g., ~3–7) or no contracts
+# will pass the filter.
 def _calculate_score(
     notional: float,
     volume_oi_ratio: Optional[float],
@@ -191,6 +196,7 @@ def find_unusual_activity(
                 open_interest=open_interest,
                 notional=notional,
                 volume_oi_ratio=volume_oi_ratio,
+                rvol=contract.rvol,
                 dte_days=dte_days,
                 score=score,
             )
