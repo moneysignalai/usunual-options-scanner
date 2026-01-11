@@ -17,7 +17,7 @@ from .telegram_client import TelegramClient
 logger = logging.getLogger("worker")
 
 # In-memory dedupe cache to avoid re-alerting the same contract every scan
-_ALERT_DEDUP_WINDOW_MINUTES = 30  # you can tune this if needed
+_ALERT_DEDUP_WINDOW_MINUTES = 390  # you can tune this if needed
 
 # Maps a stable alert key -> last time we sent it
 _recent_alerts: dict[str, datetime] = {}
