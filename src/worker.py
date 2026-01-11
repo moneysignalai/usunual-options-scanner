@@ -4,7 +4,7 @@ import logging
 import signal
 import sys
 import time
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Iterable, List, Optional
 
 from .alerts import AlertSink, build_alert_sinks
@@ -15,6 +15,57 @@ from .telegram_client import TelegramClient
 
 
 logger = logging.getLogger("worker")
+
+# In-memory dedupe cache to avoid re-alerting the same contract every scan
+_ALERT_DEDUP_WINDOW_MINUTES = 30  # you can tune this if needed
+
+# Maps a stable alert key -> last time we sent it
+_recent_alerts: dict[str, datetime] = {}
+
+
+def _make_alert_key(candidate: UnusualOptionsCandidate) -> str:
+    """
+    Build a stable key for deduping alerts for the same contract.
+    This combines underlying, option ticker, expiration, contract type, and direction.
+    """
+    return (
+        f"{candidate.underlying_ticker}:"
+        f"{candidate.options_ticker}:"
+        f"{candidate.expiration_date.isoformat()}:"
+        f"{candidate.contract_type}:"
+        f"{candidate.direction}"
+    )
+
+
+def _is_duplicate_alert(candidate: UnusualOptionsCandidate, now: datetime) -> bool:
+    """
+    Return True if we've already sent an alert for this contract
+    within the deduplication window.
+    """
+    key = _make_alert_key(candidate)
+    last = _recent_alerts.get(key)
+    if last is None:
+        return False
+
+    if now - last <= timedelta(minutes=_ALERT_DEDUP_WINDOW_MINUTES):
+        return True
+
+    # If it is older than the window, treat as new and allow re-alert.
+    return False
+
+
+def _register_alert(candidate: UnusualOptionsCandidate, now: datetime) -> None:
+    """
+    Record that we just sent an alert for this contract and prune stale entries.
+    """
+    key = _make_alert_key(candidate)
+    _recent_alerts[key] = now
+
+    # Basic pruning to keep the cache small
+    cutoff = now - timedelta(minutes=_ALERT_DEDUP_WINDOW_MINUTES)
+    stale_keys = [k for k, ts in _recent_alerts.items() if ts < cutoff]
+    for k in stale_keys:
+        _recent_alerts.pop(k, None)
 
 
 def _configure_logging() -> None:
@@ -318,7 +369,15 @@ def _scan_once(
                 "Found %d unusual contracts | ticker=%s", len(candidates), ticker
             )
 
+        now = datetime.utcnow()
         for candidate in candidates:
+            if _is_duplicate_alert(candidate, now):
+                logger.debug(
+                    "Skipping duplicate alert within window | ticker=%s | options=%s",
+                    candidate.underlying_ticker,
+                    candidate.options_ticker,
+                )
+                continue
             logger.info(
                 "ALERT EMITTED | %s %s | notional=%s",
                 ticker,
@@ -350,6 +409,7 @@ def _scan_once(
                         sink.__class__.__name__,
                         exc,
                     )
+            _register_alert(candidate, now)
 
         if not candidates:
             logger.info("No contracts passed filters | ticker=%s", ticker)
